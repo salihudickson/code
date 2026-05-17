@@ -73,15 +73,11 @@ export function useChatTitleGenerator(taskId: string): void {
         const result = await generateTitleAndSummary(content);
         if (result) {
           const { title, summary } = result;
-          if (title) {
-            const isFirstGeneration = lastGeneratedAtCount.current === 0;
-            if (
-              !isFirstGeneration &&
-              getCachedTask(taskId)?.title_manually_set
-            ) {
-              log.debug("Skipping auto-title, user renamed task", { taskId });
-              return;
-            }
+          const titleLocked = !!getCachedTask(taskId)?.title_manually_set;
+
+          if (title && titleLocked) {
+            log.debug("Skipping auto-title, user renamed task", { taskId });
+          } else if (title) {
             const client = await getAuthenticatedClient();
             if (client) {
               await client.updateTask(taskId, { title });
@@ -95,7 +91,6 @@ export function useChatTitleGenerator(taskId: string): void {
               getSessionService().updateSessionTaskTitle(taskId, title);
               log.debug("Updated task title from conversation", {
                 taskId,
-                title,
                 promptCount,
               });
             }
@@ -108,7 +103,6 @@ export function useChatTitleGenerator(taskId: string): void {
 
             log.debug("Updated task summary from conversation", {
               taskId,
-              summary,
               promptCount,
             });
           }
