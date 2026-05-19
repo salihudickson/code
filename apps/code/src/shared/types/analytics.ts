@@ -299,7 +299,8 @@ type SetupDiscoveredTaskCategory =
   | "error_tracking"
   | "event_tracking"
   | "funnel"
-  | "posthog_setup";
+  | "posthog_setup"
+  | "experiment";
 
 export interface SetupViewedProperties {
   discovery_status: "idle" | "running" | "done" | "error";
