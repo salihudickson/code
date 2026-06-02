@@ -581,8 +581,8 @@ export class PostHogAPIClient {
     }
   }
 
-  setTeamId(teamId: number): void {
-    this._teamId = teamId;
+  setTeamId(teamId: number | null | undefined): void {
+    this._teamId = teamId ?? null;
   }
 
   private async getTeamId(): Promise<number> {
@@ -691,6 +691,24 @@ export class PostHogAPIClient {
       path: { uuid: "@me" },
       body: { set_current_organization: orgId } as Record<string, unknown>,
     });
+  }
+
+  async approveAiDataProcessing(): Promise<void> {
+    const urlPath = `/api/organizations/@current/`;
+    const url = new URL(`${this.api.baseUrl}${urlPath}`);
+    const response = await this.api.fetcher.fetch({
+      method: "patch",
+      url,
+      path: urlPath,
+      overrides: {
+        body: JSON.stringify({ is_ai_data_processing_approved: true }),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to approve AI data processing: ${response.statusText}`,
+      );
+    }
   }
 
   async getProject(projectId: number) {
