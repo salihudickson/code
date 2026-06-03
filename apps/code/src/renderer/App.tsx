@@ -140,6 +140,41 @@ function App() {
   );
 
   useSubscription(
+    trpcReact.workspace.onTaskPrInfoChanged.subscriptionOptions(undefined, {
+      onData: ({ taskId, prUrl, prState }) => {
+        // Push the fresh PR state into every matching getTaskPrStatus query
+        // (one per cloudPrUrl variant). hasDiff isn't carried by the event —
+        // it's recomputed inline by the next refetch — so we preserve any
+        // existing value rather than overwriting it.
+        queryClient.setQueriesData<{
+          prState: typeof prState;
+          hasDiff: boolean;
+        }>(
+          {
+            ...trpcReact.workspace.getTaskPrStatus.pathFilter(),
+            predicate: (query) => {
+              const [, params] = query.queryKey as [
+                unknown,
+                { input?: { taskId?: string } } | undefined,
+              ];
+              return params?.input?.taskId === taskId;
+            },
+          },
+          (prev) => (prev ? { ...prev, prState } : { prState, hasDiff: false }),
+        );
+
+        // Keep the cached PR URL warm so `useTaskPrUrl`'s "Open PR" fast-path
+        // sees the new URL immediately instead of waiting for `getCachedPrUrl`
+        // to go stale.
+        queryClient.setQueryData(
+          trpcReact.workspace.getCachedPrUrl.queryKey({ taskId }),
+          { prUrl },
+        );
+      },
+    }),
+  );
+
+  useSubscription(
     trpcReact.focus.onBranchRenamed.subscriptionOptions(undefined, {
       onData: ({ worktreePath, newBranch }) => {
         useFocusStore.getState().updateSessionBranch(worktreePath, newBranch);
