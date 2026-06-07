@@ -4,6 +4,7 @@ import {
   classifyPostHogSqlQuery,
   classifyPostHogSubTool,
   POSTHOG_PRODUCTS,
+  type PostHogProductId,
 } from "./posthog-products";
 
 describe("classifyPostHogSubTool", () => {
@@ -45,6 +46,21 @@ describe("classifyPostHogSubTool", () => {
       expect(classifyPostHogSubTool(subTool)).toBe(product);
     },
   );
+
+  // Plural and verb-first tool names resolve to the same domain product as the
+  // canonical singular form — no per-variant entry required.
+  it.each([
+    ["feature-flags-activity-retrieve", "feature_flags"],
+    ["feature-flags-status-retrieve", "feature_flags"],
+    ["create-feature-flag", "feature_flags"],
+    ["update-feature-flag", "feature_flags"],
+    ["delete-feature-flag", "feature_flags"],
+    // The fix is general, not flag-specific.
+    ["create-survey", "surveys"],
+    ["create-experiment", "experiments"],
+  ])("matches plural/verb-first variant %s to %s", (subTool, product) => {
+    expect(classifyPostHogSubTool(subTool)).toBe(product);
+  });
 
   it.each(["project-get", "activity-log-list", "docs-search", "tasks-list"])(
     "returns null for admin/meta/introspection domain %s",
@@ -162,7 +178,49 @@ describe("classifyPostHogExecCall", () => {
     expect(classifyPostHogExecCall("experiment-get")).toEqual(["experiments"]);
   });
 
-  it("returns an empty array for admin/meta sub-tools", () => {
-    expect(classifyPostHogExecCall("project-get")).toEqual([]);
+  it.each<[string, string | undefined, PostHogProductId[]]>([
+    // Plural tool name resolves via the pattern matcher.
+    [
+      "feature-flags-activity-retrieve",
+      'call feature-flags-activity-retrieve {"id":1}',
+      ["feature_flags"],
+    ],
+    // Activity-log reads are attributed by their scope...
+    [
+      "activity-log-list",
+      'call activity-log-list {"scope":"FeatureFlag"}',
+      ["feature_flags"],
+    ],
+    // ...including web analytics, only reachable from the log via this scope.
+    [
+      "activity-log-list",
+      'call activity-log-list {"scope":"WebAnalyticsFilterPreset"}',
+      ["web_analytics"],
+    ],
+    // Multiple scopes are collected and deduped.
+    [
+      "advanced-activity-logs-list",
+      'call advanced-activity-logs-list {"scopes":["FeatureFlag","Insight"]}',
+      ["feature_flags", "product_analytics"],
+    ],
+  ])("attributes %s to its scope/domain product", (subTool, cmd, expected) => {
+    expect(classifyPostHogExecCall(subTool, cmd)).toEqual(expected);
+  });
+
+  it.each<[string, string | undefined]>([
+    // Admin/meta sub-tool.
+    ["project-get", undefined],
+    // Unscoped or empty-scope activity-log reads.
+    ["activity-log-list", 'call activity-log-list {"page":1}'],
+    [
+      "advanced-activity-logs-list",
+      'call advanced-activity-logs-list {"scopes":[]}',
+    ],
+    // Admin/meta scope is not surfaced.
+    ["activity-log-list", 'call activity-log-list {"scope":"Team"}'],
+    // No command text to read a scope from.
+    ["activity-log-list", undefined],
+  ])("returns nothing for %s", (subTool, cmd) => {
+    expect(classifyPostHogExecCall(subTool, cmd)).toEqual([]);
   });
 });
