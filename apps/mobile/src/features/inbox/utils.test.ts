@@ -10,9 +10,64 @@ import {
   buildPriorityFilterParam,
   buildReviewerOptions,
   formatSignalReportSummaryMarkdown,
+  orderSuggestedReviewers,
   reviewerMatchesAvailable,
   toSuggestedReviewerWriteContent,
 } from "./utils";
+
+function reviewer(login: string, uuid?: string): SuggestedReviewer {
+  return {
+    github_login: login,
+    github_name: login,
+    relevant_commits: [],
+    user: uuid
+      ? {
+          id: 1,
+          uuid,
+          email: `${login}@posthog.com`,
+          first_name: login,
+          last_name: "",
+        }
+      : null,
+  };
+}
+
+describe("orderSuggestedReviewers", () => {
+  it("moves the current user to the front", () => {
+    const reviewers = [
+      reviewer("a", "uuid-a"),
+      reviewer("me", "uuid-me"),
+      reviewer("c", "uuid-c"),
+    ];
+    const ordered = orderSuggestedReviewers(reviewers, "uuid-me");
+    expect(ordered.map((r) => r.github_login)).toEqual(["me", "a", "c"]);
+  });
+
+  it.each([
+    {
+      label: "already first",
+      reviewers: [reviewer("me", "uuid-me"), reviewer("a", "uuid-a")],
+      meUuid: "uuid-me" as string | null | undefined,
+    },
+    {
+      label: "absent",
+      reviewers: [reviewer("a", "uuid-a"), reviewer("b", "uuid-b")],
+      meUuid: "uuid-me" as string | null | undefined,
+    },
+    {
+      label: "null meUuid",
+      reviewers: [reviewer("a", "uuid-a"), reviewer("me", "uuid-me")],
+      meUuid: null as string | null | undefined,
+    },
+    {
+      label: "undefined meUuid",
+      reviewers: [reviewer("a", "uuid-a"), reviewer("me", "uuid-me")],
+      meUuid: undefined as string | null | undefined,
+    },
+  ])("is a no-op when $label", ({ reviewers, meUuid }) => {
+    expect(orderSuggestedReviewers(reviewers, meUuid)).toBe(reviewers);
+  });
+});
 
 function makeReviewer(
   partial: Partial<SuggestedReviewer> = {},
