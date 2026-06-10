@@ -3,6 +3,7 @@ import type {
   AvailableSuggestedReviewer,
   SignalReport,
   SignalReportOrderingField,
+  SignalReportPriority,
   SignalReportStatus,
   SuggestedReviewer,
   SuggestedReviewerWriteEntry,
@@ -61,6 +62,13 @@ export function buildSuggestedReviewerFilterParam(
   const normalized = reviewerIds.map((id) => id.trim()).filter(Boolean);
   if (normalized.length === 0) return undefined;
   return Array.from(new Set(normalized)).join(",");
+}
+
+export function buildPriorityFilterParam(
+  priorities: SignalReportPriority[],
+): string | undefined {
+  if (priorities.length === 0) return undefined;
+  return Array.from(new Set(priorities)).join(",");
 }
 
 export function filterReportsBySearch(
@@ -171,6 +179,7 @@ interface InboxViewedFilterState {
   sourceProductFilter: string[];
   statusFilter: SignalReportStatus[];
   suggestedReviewerFilter: string[];
+  priorityFilter: SignalReportPriority[];
   /** Default status filter as defined in the filter store, used to detect whether the user has narrowed it. */
   defaultStatusFilter: SignalReportStatus[];
 }
@@ -227,7 +236,8 @@ export function buildInboxViewedProperties(
   const hasActiveFilters =
     statusFiltered ||
     filters.sourceProductFilter.length > 0 ||
-    filters.suggestedReviewerFilter.length > 0;
+    filters.suggestedReviewerFilter.length > 0 ||
+    filters.priorityFilter.length > 0;
 
   return {
     report_count: reports.length,
