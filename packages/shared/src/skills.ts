@@ -31,3 +31,19 @@ export interface ExportedSkill {
   body: string;
   files: ExportedSkillFile[];
 }
+
+/**
+ * Server "skill already exists" messages must include this marker verbatim;
+ * the UI keys its overwrite-confirmation flow on it.
+ */
+export const SKILL_EXISTS_MARKER = "already exists";
+
+/**
+ * Strips a leading YAML frontmatter block from a SKILL.md document.
+ * CRLF-aware so render (UI) and export (workspace-server) agree on the body.
+ */
+export function stripFrontmatter(content: string): string {
+  const match = content.match(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/);
+  if (!match) return content;
+  return content.slice(match[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
+}
