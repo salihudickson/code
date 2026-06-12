@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FoldersService } from "../folders/folders";
 import type { PosthogPluginService } from "../posthog-plugin/posthog-plugin";
+import { WatcherService } from "../watcher/service";
 import { SkillsService } from "./skills";
 
 let root: string;
@@ -18,7 +19,7 @@ function makeService(): SkillsService {
   const folders = {
     getFolders: async () => [{ path: folderPath, name: "my-repo" }],
   } as unknown as FoldersService;
-  return new SkillsService(plugin, folders);
+  return new SkillsService(plugin, folders, new WatcherService());
 }
 
 async function createSkill(
@@ -178,6 +179,74 @@ describe("readSkillFile", () => {
       "real content",
     );
   });
+});
+
+describe("watchSkillDirs", () => {
+  it(
+    "emits a debounced change event when a watched dir changes",
+    { timeout: 15_000 },
+    async () => {
+      const service = makeService();
+      const controller = new AbortController();
+      const generator = service.watchSkillDirs(
+        [repoSkillsDir],
+        controller.signal,
+      );
+
+      const firstEvent = generator.next();
+      // Give the native watcher a moment to attach before mutating the dir.
+      await new Promise((r) => setTimeout(r, 500));
+      await createSkill(repoSkillsDir, "watched-skill");
+
+      const result = await Promise.race([
+        firstEvent,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("timed out waiting for change event")),
+            10_000,
+          ),
+        ),
+      ]);
+      expect(result).toEqual({ value: { changed: true }, done: false });
+
+      controller.abort();
+      await generator.return(undefined);
+    },
+  );
+
+  it("finishes immediately with no directories", async () => {
+    const generator = makeService().watchSkillDirs([]);
+    expect(await generator.next()).toEqual({ value: undefined, done: true });
+  });
+
+  it(
+    "picks up a skills dir created after the watch starts",
+    { timeout: 15_000 },
+    async () => {
+      const service = makeService();
+      const controller = new AbortController();
+      const lateDir = path.join(root, "late-repo", ".claude", "skills");
+      const generator = service.watchSkillDirs([lateDir], controller.signal);
+
+      const firstEvent = generator.next();
+      await new Promise((r) => setTimeout(r, 100));
+      await mkdir(lateDir, { recursive: true });
+
+      const result = await Promise.race([
+        firstEvent,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("timed out waiting for change event")),
+            10_000,
+          ),
+        ),
+      ]);
+      expect(result).toEqual({ value: { changed: true }, done: false });
+
+      controller.abort();
+      await generator.return(undefined);
+    },
+  );
 });
 
 describe("createSkill", () => {
