@@ -1,6 +1,10 @@
 import type { SignalReport } from "@posthog/shared/types";
 import { describe, expect, it } from "vitest";
-import { buildInboxViewedProperties } from "./engagement";
+import {
+  buildInboxViewedProperties,
+  type InboxDetailTab,
+  inboxDetailTabReports,
+} from "./engagement";
 
 function fakeReport(overrides: Partial<SignalReport> = {}): SignalReport {
   return {
@@ -121,5 +125,77 @@ describe("buildInboxViewedProperties", () => {
     });
 
     expect(props.has_active_filters).toBe(false);
+  });
+});
+
+describe("inboxDetailTabReports", () => {
+  const pull = fakeReport({
+    id: "pr",
+    status: "ready",
+    implementation_pr_url: "https://github.com/x/y/pull/1",
+  });
+  const reportRow = fakeReport({ id: "rep", status: "ready" });
+  const queuedRun = fakeReport({ id: "queued", status: "candidate" });
+  const liveRun = fakeReport({ id: "live", status: "in_progress" });
+  const failedRun = fakeReport({ id: "failed", status: "failed" });
+
+  const cases: Array<[InboxDetailTab, SignalReport[], SignalReport[]]> = [
+    ["pulls", [pull, queuedRun, reportRow], [pull]],
+    ["reports", [reportRow, pull, queuedRun, failedRun], [reportRow]],
+    ["runs", [queuedRun, liveRun, failedRun], [queuedRun, liveRun, failedRun]],
+  ];
+  it.each(cases)(
+    "keeps the rows the %s tab renders",
+    (tab, input, expected) => {
+      expect(inboxDetailTabReports(tab, input)).toEqual(expected);
+    },
+  );
+
+  it("treats a ready non-run report as a finished run on the runs tab", () => {
+    // `ready` is shared by isReportTabReport and isFinishedRunReport, so a ready
+    // report renders in both the Reports tab and the Runs tab's "Recently
+    // finished" section. The runs list reflects that overlap.
+    expect(inboxDetailTabReports("runs", [queuedRun, reportRow])).toEqual([
+      queuedRun,
+      reportRow,
+    ]);
+  });
+
+  it("orders runs Queued → Live → Finished, newest-first within a section", () => {
+    const olderFinished = fakeReport({
+      id: "fin-old",
+      status: "ready",
+      updated_at: "2026-06-01T00:00:00Z",
+    });
+    const newerFinished = fakeReport({
+      id: "fin-new",
+      status: "failed",
+      updated_at: "2026-06-09T00:00:00Z",
+    });
+    // Deliberately shuffled input; output must follow the rendered order.
+    const visible = inboxDetailTabReports("runs", [
+      olderFinished,
+      liveRun,
+      newerFinished,
+      queuedRun,
+    ]);
+    expect(visible.map((r) => r.id)).toEqual([
+      "queued",
+      "live",
+      "fin-new",
+      "fin-old",
+    ]);
+  });
+
+  it("ranks a recently-finished run against the runs list (not rank -1)", () => {
+    // The regression: `failed`/`ready` runs render in the Runs tab's "Recently
+    // finished" section but aren't `isAgentRunReport`, so they used to fall out
+    // of the tracked list and report rank -1.
+    const visible = inboxDetailTabReports("runs", [
+      queuedRun,
+      liveRun,
+      failedRun,
+    ]);
+    expect(visible.findIndex((r) => r.id === failedRun.id)).toBe(2);
   });
 });

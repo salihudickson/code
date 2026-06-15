@@ -3,6 +3,39 @@ import type {
   InboxViewedProperties,
 } from "@posthog/shared/analytics-events";
 import type { SignalReport } from "@posthog/shared/domain-types";
+import {
+  isPullRequestReport,
+  isReportTabReport,
+  orderedRunsTabReports,
+} from "./reportMembership";
+
+/** Originating inbox tab a report detail was opened from, derived from the route. */
+export type InboxDetailTab = "pulls" | "reports" | "runs";
+
+/**
+ * The list of reports a detail screen's `rank` / `list_size` should be measured
+ * against — i.e. the rows the originating tab actually rendered, in the order it
+ * rendered them. Pure so it can be unit-tested and stays aligned with the tab
+ * components.
+ *
+ * The Runs tab partitions and sorts into Queued → Live → Recently finished, so
+ * runs reuse {@link orderedRunsTabReports} (the same selector `RunsTab` renders
+ * from) rather than raw query order. That also pulls in finished runs, which
+ * otherwise would report `rank: -1` against a list they aren't part of. The
+ * Pull requests / Reports tabs render their filtered list in query order.
+ */
+export function inboxDetailTabReports(
+  tab: InboxDetailTab,
+  reports: SignalReport[],
+): SignalReport[] {
+  if (tab === "runs") {
+    return orderedRunsTabReports(reports);
+  }
+  if (tab === "pulls") {
+    return reports.filter(isPullRequestReport);
+  }
+  return reports.filter(isReportTabReport);
+}
 
 /** Report age at fire time in hours, rounded to one decimal. Clamped at 0 to guard against clock skew. */
 export function reportAgeHours(createdAt: string | null | undefined): number {
