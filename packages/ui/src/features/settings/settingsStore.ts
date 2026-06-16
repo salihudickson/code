@@ -120,8 +120,10 @@ interface SettingsStore {
   // Terminal
   terminalFont: TerminalFont;
   terminalCustomFontFamily: string;
+  terminalGpuRendering: boolean;
   setTerminalFont: (font: TerminalFont) => void;
   setTerminalCustomFontFamily: (value: string) => void;
+  setTerminalGpuRendering: (enabled: boolean) => void;
 
   // Conversation thread (new-thread)
   conversationCollapseMode: CollapseMode;
@@ -232,9 +234,12 @@ export const useSettingsStore = create<SettingsStore>()(
       // Terminal
       terminalFont: "berkeley-mono",
       terminalCustomFontFamily: "",
+      terminalGpuRendering: true,
       setTerminalFont: (font) => set({ terminalFont: font }),
       setTerminalCustomFontFamily: (value) =>
         set({ terminalCustomFontFamily: value }),
+      setTerminalGpuRendering: (enabled) =>
+        set({ terminalGpuRendering: enabled }),
 
       // Conversation thread (new-thread)
       conversationCollapseMode: COLLAPSE_MODE_DEFAULT,
@@ -320,6 +325,7 @@ export const useSettingsStore = create<SettingsStore>()(
         // Terminal
         terminalFont: state.terminalFont,
         terminalCustomFontFamily: state.terminalCustomFontFamily,
+        terminalGpuRendering: state.terminalGpuRendering,
 
         // Conversation thread (new-thread)
         conversationCollapseMode: state.conversationCollapseMode,
