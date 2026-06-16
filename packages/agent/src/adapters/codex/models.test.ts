@@ -1,10 +1,49 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
-import { formatCodexModelName, modelIdFromConfigOptions } from "./models";
+import {
+  formatCodexModelName,
+  getReasoningEffortOptions,
+  modelIdFromConfigOptions,
+  supportsXhighEffort,
+} from "./models";
 
 describe("formatCodexModelName", () => {
   it("uses raw lowercase model ids", () => {
     expect(formatCodexModelName("GPT-5.5")).toBe("gpt-5.5");
+  });
+});
+
+describe("getReasoningEffortOptions", () => {
+  const values = (modelId: string) =>
+    getReasoningEffortOptions(modelId).map((o) => o.value);
+
+  it.each(["gpt-5.5", "gpt-5.5-codex", "openai/gpt-5.5", "GPT-5.5"])(
+    "offers Extra High for the gpt-5.5 family (%s)",
+    (modelId) => {
+      expect(values(modelId)).toEqual(["low", "medium", "high", "xhigh"]);
+    },
+  );
+
+  it.each(["gpt-5.3-codex", "gpt-5.1", "o3"])(
+    "caps at High for other models (%s)",
+    (modelId) => {
+      expect(values(modelId)).toEqual(["low", "medium", "high"]);
+    },
+  );
+
+  it('labels the extra tier "Extra High"', () => {
+    const xhigh = getReasoningEffortOptions("gpt-5.5").find(
+      (o) => o.value === "xhigh",
+    );
+    expect(xhigh?.name).toBe("Extra High");
+  });
+});
+
+describe("supportsXhighEffort", () => {
+  it("is true for the gpt-5.5 family and false for other models", () => {
+    expect(supportsXhighEffort("gpt-5.5-codex")).toBe(true);
+    expect(supportsXhighEffort("GPT-5.5")).toBe(true);
+    expect(supportsXhighEffort("gpt-5.3-codex")).toBe(false);
   });
 });
 
