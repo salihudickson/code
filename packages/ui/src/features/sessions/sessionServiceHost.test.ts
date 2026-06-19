@@ -390,6 +390,7 @@ describe("SessionService", () => {
     mockSettingsState.customInstructions = "";
     mockGetIsOnline.mockReturnValue(true);
     mockGetConfigOptionByCategory.mockReturnValue(undefined);
+    mockBuildAuthenticatedClient.mockReturnValue(mockAuthenticatedClient);
     mockSessionStoreSetters.getSessionByTaskId.mockReturnValue(undefined);
     mockSessionStoreSetters.getSessions.mockReturnValue({});
     mockAuth.fetchAuthState.mockResolvedValue({
@@ -614,6 +615,70 @@ describe("SessionService", () => {
           errorMessage: expect.stringContaining("Authentication required"),
         }),
       );
+    });
+
+    it("keeps the session connecting while auth restores, then recovers", async () => {
+      vi.useFakeTimers();
+      try {
+        const service = getSessionService();
+        const clearSpy = vi
+          .spyOn(service, "clearSessionError")
+          .mockResolvedValue(undefined);
+        const initialPrompt: ContentBlock[] = [
+          { type: "text", text: "do the thing" },
+        ];
+
+        mockAuth.fetchAuthState.mockResolvedValue({
+          status: "restoring",
+          bootstrapComplete: false,
+          cloudRegion: "us",
+          orgProjectsMap: {},
+          currentOrgId: null,
+          currentProjectId: 123,
+          hasCodeAccess: null,
+          needsScopeReauth: false,
+        });
+
+        const promise = service.connectToTask({
+          task: createMockTask(),
+          repoPath: "/repo",
+          initialPrompt,
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockSessionStoreSetters.setSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: "connecting",
+            initialPrompt,
+          }),
+        );
+        expect(mockTrpcAgent.start.mutate).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(mockSessionStoreSetters.updateSession).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ status: "error" }),
+        );
+
+        mockAuth.fetchAuthState.mockResolvedValue({
+          status: "authenticated",
+          bootstrapComplete: true,
+          cloudRegion: "us",
+          orgProjectsMap: {},
+          currentOrgId: null,
+          currentProjectId: 123,
+          hasCodeAccess: true,
+          needsScopeReauth: false,
+        });
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        await promise;
+
+        expect(clearSpy).toHaveBeenCalledWith("task-123", "/repo");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     describe("auto-retry on connect failure", () => {
@@ -3631,6 +3696,161 @@ describe("SessionService", () => {
 
       expect(result.stopReason).toBe("queued");
       expect(mockTrpcCloudTask.retry.mutate).not.toHaveBeenCalled();
+    });
+
+    it("queues cloud prompt while auth is still restoring", async () => {
+      const service = getSessionService();
+      mockSessionStoreSetters.getSessionByTaskId.mockReturnValue(
+        createMockSession({
+          isCloud: true,
+          cloudStatus: "in_progress",
+          status: "connected",
+          isPromptPending: false,
+        }),
+      );
+      mockAuth.fetchAuthState.mockResolvedValue({
+        status: "restoring",
+        bootstrapComplete: false,
+        cloudRegion: "us",
+        orgProjectsMap: {},
+        currentOrgId: null,
+        currentProjectId: 123,
+        hasCodeAccess: null,
+        needsScopeReauth: false,
+      });
+
+      const prompt: ContentBlock[] = [{ type: "text", text: "hold this" }];
+      const result = await service.sendPrompt("task-123", prompt);
+
+      expect(result.stopReason).toBe("queued");
+      expect(mockSessionStoreSetters.enqueueMessage).toHaveBeenCalledWith(
+        "task-123",
+        "hold this",
+        prompt,
+      );
+      expect(mockTrpcCloudTask.sendCommand.mutate).not.toHaveBeenCalled();
+    });
+
+    it("flushes cloud prompt queued during auth restore after auth is restored", async () => {
+      vi.useFakeTimers();
+      try {
+        const service = getSessionService();
+        const prompt: ContentBlock[] = [{ type: "text", text: "hold this" }];
+        const queuedMessage = {
+          id: "queue-1",
+          content: "hold this",
+          rawPrompt: prompt,
+          queuedAt: 1700000000,
+        };
+        const session = createMockSession({
+          isCloud: true,
+          cloudStatus: "in_progress",
+          status: "connected",
+          isPromptPending: false,
+          messageQueue: [queuedMessage],
+        });
+        mockSessionStoreSetters.getSessions.mockReturnValue({
+          "run-123": session,
+        });
+        mockSessionStoreSetters.getSessionByTaskId.mockReturnValue(session);
+        mockSessionStoreSetters.dequeueMessages.mockReturnValue([
+          queuedMessage,
+        ]);
+        mockTrpcCloudTask.sendCommand.mutate.mockResolvedValue({
+          success: true,
+          result: { queued: true },
+        });
+
+        service.flushQueuedCloudMessagesAfterAuthRestored();
+        await vi.advanceTimersByTimeAsync(0);
+
+        await vi.waitFor(() => {
+          expect(mockTrpcCloudTask.sendCommand.mutate).toHaveBeenCalledWith(
+            expect.objectContaining({
+              taskId: "task-123",
+              runId: "run-123",
+              method: "user_message",
+            }),
+          );
+        });
+        expect(mockSessionStoreSetters.dequeueMessages).toHaveBeenCalledWith(
+          "task-123",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not drain the cloud queue while auth is still restoring", async () => {
+      vi.useFakeTimers();
+      try {
+        const service = getSessionService();
+        const prompt: ContentBlock[] = [{ type: "text", text: "hold this" }];
+        const queuedMessage = {
+          id: "queue-1",
+          content: "hold this",
+          rawPrompt: prompt,
+          queuedAt: 1700000000,
+        };
+        const session = createMockSession({
+          isCloud: true,
+          cloudStatus: "in_progress",
+          status: "connected",
+          isPromptPending: false,
+          messageQueue: [queuedMessage],
+        });
+        mockSessionStoreSetters.getSessions.mockReturnValue({
+          "run-123": session,
+        });
+        mockSessionStoreSetters.getSessionByTaskId.mockReturnValue(session);
+        mockSessionStoreSetters.dequeueMessages.mockReturnValue([
+          queuedMessage,
+        ]);
+        mockAuth.fetchAuthState.mockResolvedValue({
+          status: "restoring",
+          bootstrapComplete: false,
+          cloudRegion: "us",
+          orgProjectsMap: {},
+          currentOrgId: null,
+          currentProjectId: 123,
+          hasCodeAccess: null,
+          needsScopeReauth: false,
+        });
+
+        service.flushQueuedCloudMessagesAfterAuthRestored();
+        await vi.advanceTimersByTimeAsync(10);
+
+        expect(mockSessionStoreSetters.dequeueMessages).not.toHaveBeenCalled();
+        expect(mockTrpcCloudTask.sendCommand.mutate).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("counts queued messages across cloud sessions only", () => {
+      const service = getSessionService();
+      const queued = (id: string) => ({
+        id,
+        content: "queued",
+        rawPrompt: [{ type: "text", text: "queued" }] as ContentBlock[],
+        queuedAt: 1700000000,
+      });
+      mockSessionStoreSetters.getSessions.mockReturnValue({
+        "run-cloud-a": createMockSession({
+          isCloud: true,
+          messageQueue: [queued("a1"), queued("a2")],
+        }),
+        "run-local": createMockSession({
+          isCloud: false,
+          messageQueue: [queued("l1")],
+        }),
+        "run-cloud-empty": createMockSession({
+          isCloud: true,
+          messageQueue: [],
+        }),
+      });
+
+      expect(service.countQueuedCloudMessages()).toBe(2);
     });
 
     it("does not pin isPromptPending when queueing during sandbox boot", async () => {

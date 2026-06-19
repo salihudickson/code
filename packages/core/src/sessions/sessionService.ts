@@ -92,6 +92,7 @@ const LOCAL_SESSION_RECOVERY_FAILED_MESSAGE =
 const GITHUB_AUTHORIZATION_REQUIRED_CODE = "github_authorization_required";
 const AUTO_RETRY_MAX_ATTEMPTS = 2;
 const AUTO_RETRY_DELAY_MS = 10_000;
+const AUTH_RESTORE_MAX_RETRY_WAITS = 6;
 
 class GitHubAuthorizationRequiredForCloudHandoffError extends Error {
   constructor(
@@ -273,6 +274,11 @@ interface AuthCredentials {
   projectId: number;
   client: AuthClient;
 }
+
+type AuthCredentialsStatus =
+  | { kind: "ready"; auth: AuthCredentials }
+  | { kind: "restoring" }
+  | { kind: "missing" };
 
 export interface ConnectParams {
   task: Task;
@@ -529,7 +535,11 @@ export class SessionService {
     }
 
     try {
-      const auth = await this.getAuthCredentials();
+      const authStatus = await this.getAuthCredentialsStatus();
+      if (authStatus.kind === "restoring") {
+        throw new Error("Authentication is still restoring. Please wait.");
+      }
+      const auth = authStatus.kind === "ready" ? authStatus.auth : null;
       const route = routeLocalConnect({
         hasAuth: auth !== null,
         latestRunId: latestRun?.id,
@@ -657,23 +667,38 @@ export class SessionService {
 
       let lastRetryMessage = message;
       let wentOffline = false;
-      for (let attempt = 1; attempt <= AUTO_RETRY_MAX_ATTEMPTS; attempt++) {
+      let restoringWaits = 0;
+      let attempt = 0;
+      while (attempt < AUTO_RETRY_MAX_ATTEMPTS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, AUTO_RETRY_DELAY_MS),
+        );
+        if (!this.d.getIsOnline()) {
+          this.d.log.warn("Skipping retry — device went offline", { taskId });
+          wentOffline = true;
+          break;
+        }
+
+        // Wait out an in-flight restore instead of spending a retry on
+        // clearSessionError, which tears the connecting session down.
+        if (
+          restoringWaits < AUTH_RESTORE_MAX_RETRY_WAITS &&
+          (await this.getAuthCredentialsStatus()).kind === "restoring"
+        ) {
+          restoringWaits++;
+          this.d.log.info("Auth still restoring; keeping session connecting", {
+            taskId,
+            restoringWaits,
+          });
+          continue;
+        }
+
+        attempt++;
         this.d.log.warn("Auto-retrying failed connection", {
           taskId,
           attempt,
           delayMs: AUTO_RETRY_DELAY_MS,
         });
-        await new Promise((resolve) =>
-          setTimeout(resolve, AUTO_RETRY_DELAY_MS),
-        );
-        if (!this.d.getIsOnline()) {
-          this.d.log.warn("Skipping retry — device went offline", {
-            taskId,
-            attempt,
-          });
-          wentOffline = true;
-          break;
-        }
         try {
           await this.clearSessionError(taskId, repoPath);
           return;
@@ -2187,13 +2212,20 @@ export class SessionService {
       return { stopReason: "queued" };
     }
 
-    const [auth, cloudCommandAuth] = await Promise.all([
-      this.getAuthCredentials(),
-      this.getCloudCommandAuth(),
-    ]);
-    if (!auth || !cloudCommandAuth) {
+    const authStatus = await this.getAuthCredentialsStatus();
+    if (authStatus.kind === "restoring") {
+      return this.queueRestoringCloudPrompt(
+        session,
+        prompt,
+        "Cloud message queued (auth restoring)",
+      );
+    }
+
+    const cloudCommandAuth = await this.getCloudCommandAuth();
+    if (authStatus.kind !== "ready" || !cloudCommandAuth) {
       throw new Error("Authentication required for cloud commands");
     }
+    const { auth } = authStatus;
 
     this.watchCloudTask(
       session.taskId,
@@ -2331,6 +2363,13 @@ export class SessionService {
           session.status === "connected");
       if (!canSendNow || session.isPromptPending) return;
 
+      // Draining while auth is still restoring would route through the restoring
+      // gate in sendCloudPrompt, re-enqueueing a single merged prompt and losing
+      // the original message boundaries. The auth-restored flush re-runs this
+      // once credentials are ready.
+      const authStatus = await this.getAuthCredentialsStatus();
+      if (authStatus.kind === "restoring") return;
+
       const drained = this.d.store.dequeueMessages(taskId);
       const combined = this.d.h.combineQueuedCloudPrompts(drained);
       if (!combined) return;
@@ -2360,10 +2399,19 @@ export class SessionService {
     session: AgentSession,
     prompt: string | ContentBlock[],
   ): Promise<{ stopReason: string }> {
-    const authCredentials = await this.getAuthCredentials();
-    if (!authCredentials) {
+    const authStatus = await this.getAuthCredentialsStatus();
+    if (authStatus.kind === "restoring") {
+      return this.queueRestoringCloudPrompt(
+        session,
+        prompt,
+        "Cloud resume queued (auth restoring)",
+      );
+    }
+    if (authStatus.kind !== "ready") {
       throw new Error("Authentication required for cloud commands");
     }
+    const authCredentials = authStatus.auth;
+
     const auth = await this.getCloudCommandAuth();
     if (!auth) {
       throw new Error("Authentication required for cloud commands");
@@ -2899,8 +2947,11 @@ export class SessionService {
     if (session?.initialPrompt?.length) {
       const { taskTitle, initialPrompt } = session;
       await this.teardownSession(session.taskRunId);
-      const auth = await this.getAuthCredentials();
-      if (!auth) {
+      const authStatus = await this.getAuthCredentialsStatus();
+      if (authStatus.kind === "restoring") {
+        throw new Error("Authentication is still restoring. Please wait.");
+      }
+      if (authStatus.kind !== "ready") {
         throw new Error(
           "Unable to reach server. Please check your connection.",
         );
@@ -2909,7 +2960,7 @@ export class SessionService {
         taskId,
         taskTitle,
         repoPath,
-        auth,
+        authStatus.auth,
         initialPrompt,
       );
       return;
@@ -2957,10 +3008,14 @@ export class SessionService {
     }
     this.unsubscribeFromChannel(taskRunId);
 
-    const auth = await this.getAuthCredentials();
-    if (!auth) {
+    const authStatus = await this.getAuthCredentialsStatus();
+    if (authStatus.kind === "restoring") {
+      throw new Error("Authentication is still restoring. Please wait.");
+    }
+    if (authStatus.kind !== "ready") {
       throw new Error("Unable to reach server. Please check your connection.");
     }
+    const auth = authStatus.auth;
 
     const prefetchedLogs = await this.fetchSessionLogs(logUrl, taskRunId);
 
@@ -3704,6 +3759,24 @@ export class SessionService {
     }
   }
 
+  public flushQueuedCloudMessagesAfterAuthRestored(): void {
+    const sessions = this.d.store.getSessions();
+    for (const session of Object.values(sessions)) {
+      if (!session.isCloud || session.messageQueue.length === 0) continue;
+      this.scheduleCloudQueueFlush(session.taskId, "auth_restored");
+    }
+  }
+
+  public countQueuedCloudMessages(): number {
+    const sessions = this.d.store.getSessions();
+    let count = 0;
+    for (const session of Object.values(sessions)) {
+      if (!session.isCloud) continue;
+      count += session.messageQueue.length;
+    }
+    return count;
+  }
+
   public updateSessionTaskTitle(taskId: string, taskTitle: string): void {
     const session = this.d.store.getSessionByTaskId(taskId);
     if (!session) return;
@@ -4243,16 +4316,39 @@ export class SessionService {
 
   // --- Helper Methods ---
 
-  private async getAuthCredentials(): Promise<AuthCredentials | null> {
+  private async getAuthCredentialsStatus(): Promise<AuthCredentialsStatus> {
     const authState = await this.d.fetchAuthState();
+    // `bootstrapComplete === false` also covers the pre-initialize window where
+    // status is still the default "anonymous" but auth has not resolved yet.
+    if (
+      authState.status === "restoring" ||
+      authState.bootstrapComplete === false
+    ) {
+      return { kind: "restoring" };
+    }
+
     const apiHost = authState.cloudRegion
       ? getCloudUrlFromRegion(authState.cloudRegion)
       : null;
     const projectId = authState.currentProjectId;
     const client = this.d.createAuthenticatedClient(authState);
 
-    if (!apiHost || !projectId || !client) return null;
-    return { apiHost, projectId, client };
+    if (!apiHost || !projectId || !client) return { kind: "missing" };
+    return { kind: "ready", auth: { apiHost, projectId, client } };
+  }
+
+  private queueRestoringCloudPrompt(
+    session: AgentSession,
+    prompt: string | ContentBlock[],
+    reason: string,
+  ): { stopReason: "queued" } {
+    const transport = this.d.h.getCloudPromptTransport(prompt);
+    this.d.store.enqueueMessage(session.taskId, transport.promptText, prompt);
+    this.d.log.info(reason, {
+      taskId: session.taskId,
+      queueLength: session.messageQueue.length + 1,
+    });
+    return { stopReason: "queued" };
   }
 
   private parseLogContent(content: string): ParsedSessionLogs {
