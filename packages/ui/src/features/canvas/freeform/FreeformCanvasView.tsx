@@ -1,4 +1,5 @@
 import {
+  ArrowCounterClockwiseIcon,
   ArrowUUpLeftIcon,
   ArrowUUpRightIcon,
   ShapesIcon,
@@ -38,6 +39,7 @@ import { useCallback, useMemo, useState } from "react";
 import { FreeformCanvas } from "./FreeformCanvas";
 import { FreeformGenerateBar } from "./FreeformGenerateBar";
 import { handleFreeformDataRequest } from "./freeformDataBridge";
+import { useCanvasNavigation, useHomeCanvasReset } from "./useHomeCanvasView";
 
 // The dashboardId a thread is keyed on ("dashboard:<id>" → "<id>").
 function dashboardIdOf(threadId: string): string {
@@ -82,6 +84,13 @@ export function FreeformCanvasView({
     () => channels.find((c) => c.id === channelId)?.name ?? "",
     [channels, channelId],
   );
+
+  // The "Reset to default" affordance, shown only on a channel's home canvas.
+  const {
+    isHomeCanvas,
+    isResetting,
+    reset: onResetToDefault,
+  } = useHomeCanvasReset({ channelId, dashboardId, threadId });
 
   // Run status: cloud reports via cloudStatus / latest_run.status; local is tied
   // to the live ACP session. Assume running while the task record loads.
@@ -146,6 +155,9 @@ export function FreeformCanvasView({
     [threadId, setRuntimeError],
   );
 
+  // Routes the canvas's allowlisted nav intents within this channel.
+  const onNavigate = useCanvasNavigation(channelId);
+
   // The edit composer's draft, lifted so self-repair can prefill it.
   const [draft, setDraft] = useState("");
   const askAgentToFix = () => {
@@ -191,6 +203,18 @@ export function FreeformCanvasView({
                 <Text size="1" className="ml-1 text-gray-9">
                   v{idx + 1}/{versions.length}
                 </Text>
+              )}
+              {isHomeCanvas && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="ml-1"
+                  disabled={isGenerating || isResetting}
+                  onClick={onResetToDefault}
+                >
+                  <ArrowCounterClockwiseIcon size={14} />
+                  {isResetting ? "Resetting…" : "Reset to default"}
+                </Button>
               )}
             </Flex>
             {isGenerating && genTaskId ? (
@@ -246,6 +270,7 @@ export function FreeformCanvasView({
                   onDataRequest={handleFreeformDataRequest}
                   onError={onError}
                   onRendered={onRendered}
+                  onNavigate={onNavigate}
                   analytics={analytics}
                 />
               </ErrorBoundary>

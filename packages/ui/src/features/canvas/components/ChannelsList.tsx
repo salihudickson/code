@@ -81,6 +81,7 @@ import {
   useCreateAndOpenDashboard,
   useDashboardMutations,
   useDashboards,
+  useOpenHomeCanvas,
   usePrefetchDashboards,
 } from "@posthog/ui/features/canvas/hooks/useDashboards";
 import { TaskIcon } from "@posthog/ui/features/sidebar/components/items/TaskIcon";
@@ -708,6 +709,7 @@ function ChannelSection({
   channels: Channel[];
 }) {
   const navigate = useNavigate();
+  const openHomeCanvas = useOpenHomeCanvas();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: tasks } = useTasks();
   const archivedTaskIds = useArchivedTaskIds();
@@ -838,10 +840,7 @@ function ChannelSection({
                       surface: "sidebar",
                       channel_id: channel.id,
                     });
-                    navigate({
-                      to: "/website/$channelId",
-                      params: { channelId: channel.id },
-                    });
+                    void openHomeCanvas(channel);
                   }}
                   className="w-full min-w-0 justify-start ps-8 data-selected:bg-fill-selected data-selected:text-gray-12"
                 >
