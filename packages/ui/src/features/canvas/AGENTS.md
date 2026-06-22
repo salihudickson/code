@@ -5,6 +5,32 @@ is an agent-authored single-file React app rendered in a sandboxed iframe. Read
 this before changing breadcrumbs, canvas naming, or the canvas generation harness.
 The root `AGENTS.md` architecture rules still apply.
 
+## Components & styling
+
+- **Use `@posthog/quill`, not Radix.** New UI in this space pulls components from
+  `@posthog/quill` (`Button`, `Dialog*`, `AlertDialog*`, `DropdownMenu*`,
+  `ContextMenu*`, `Tooltip*`, `Collapsible*`, …). Do **not** reach for
+  `@radix-ui/themes` or `@radix-ui/react-*`. Some older code here still imports
+  `@radix-ui/themes` (`Box`, `Flex`, `Text`, `AlertDialog`) — that's legacy to be
+  migrated, not a pattern to copy. When you touch such code, prefer swapping to
+  the Quill equivalent.
+- **Don't restyle Quill internals.** Quill components are already themed —
+  spacing, typography, and especially **color** are baked in. Do not add
+  `text-gray-*` / `text-muted-foreground` / `font-*` or other color/typography
+  classes to elements *inside* a Quill component (menu items, dialog titles,
+  buttons, etc.); you'll fight or override the design system and drift from every
+  other surface. Trust the defaults. Layout-only utilities (`flex`, `gap`,
+  width/`max-w`, `truncate`) on wrappers are fine; reach for `className` overrides
+  on Quill items only when there is a real, deliberate exception — and call it out.
+- **Suffix `…` on anything that opens another step.** A menu item or button whose
+  click opens a follow-up surface — a dialog, a nested menu, a picker, a
+  confirmation — gets a trailing ellipsis (`…`, the character, not three dots) to
+  signal it isn't the final action: `New…`, `Rename channel…`, `Delete channel…`,
+  `Choose a template…`. A label that performs its action immediately or navigates
+  straight to a destination gets **no** ellipsis (`Edit CONTEXT.md`, `Star
+  channel`). When in doubt: does clicking it ask for more input or confirmation
+  before anything happens? If yes, add the `…`.
+
 ## Spaces & chrome
 
 - Channels is a **top-level space** reached through the app rail (`AppNav`),
@@ -53,3 +79,25 @@ The root `AGENTS.md` architecture rules still apply.
   Freeform autosaves the whole file each agent turn, so a concurrent edit from
   another client can clobber. Acceptable for now; revisit with optimistic
   concurrency if multi-client editing becomes real.
+
+## Channel sidebar preloading
+
+- A channel's contents load **lazily on expand**: `ChannelSection`
+  (`components/ChannelsList.tsx`) only passes a real `channelId` to its content
+  queries once `open` is true, so the tree doesn't fire one query per channel on
+  mount.
+- To keep first-open instant, the same caches are **warmed on hover/focus**:
+  `ChannelSection.prefetchContents()` runs from the row's `onMouseEnter` /
+  `onFocus` and prefetches every per-channel query. Each prefetch hook reuses the
+  query's `queryOptions` with the **same `staleTime`** as the live query, so it
+  no-ops when the data is already fresh.
+- **Rule: lazy-loaded content and preloading must stay in lockstep.** When you
+  add a new per-channel item type to the expanded tree (a new query gated on
+  `open`, like dashboards or filed tasks), you MUST also:
+  1. add a `usePrefetch…` hook next to that query (mirror `usePrefetchDashboards`
+     in `hooks/useDashboards.ts` / `usePrefetchChannelTasks` in
+     `hooks/useChannelTasks.ts` — same key, same `staleTime`), and
+  2. call it inside `ChannelSection.prefetchContents()`.
+
+  Otherwise the new content cold-fetches on first expand and reintroduces the
+  open jank the prefetch path exists to prevent.
