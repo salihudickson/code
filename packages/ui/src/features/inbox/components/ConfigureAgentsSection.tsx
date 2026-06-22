@@ -304,14 +304,17 @@ function SetupTaskSection() {
       const settings = useSettingsStore.getState();
       const adapter = settings.lastUsedAdapter ?? "claude";
       const apiHost = getCloudUrlFromRegion(cloudRegion);
-      const model =
-        settings.lastUsedModel ??
-        (await resolveDefaultModel(
-          queryClient,
-          apiHost,
-          adapter,
-          modelResolver,
-        ));
+      const resolvedModel = await resolveDefaultModel(
+        queryClient,
+        apiHost,
+        adapter,
+        modelResolver,
+        settings.lastUsedModel,
+      );
+      // The resolver returns undefined on a transient failure; fall back to the
+      // persisted id so a gateway outage degrades gracefully rather than blocking
+      // setup for a user whose persisted model was valid.
+      const model = resolvedModel ?? settings.lastUsedModel;
 
       if (!model) {
         sonnerToast.dismiss(toastId);
@@ -323,6 +326,15 @@ function SetupTaskSection() {
         return;
       }
 
+      // The persisted effort belongs to `lastUsedModel`; if the resolver swapped
+      // in a fallback default, that tier may be unsupported for the new model and
+      // the cloud runtime rejects the pair (see agent `bin.ts`). Only carry the
+      // effort when the model is unchanged; otherwise let the runtime default it.
+      const reasoningLevel =
+        model === settings.lastUsedModel
+          ? (settings.lastUsedReasoningEffort ?? undefined)
+          : undefined;
+
       const input: TaskCreationInput = {
         content: AUTONOMY_SETUP_PROMPT,
         taskDescription: AUTONOMY_SETUP_PROMPT,
@@ -332,7 +344,7 @@ function SetupTaskSection() {
         executionMode: "auto",
         adapter,
         model,
-        reasoningLevel: settings.lastUsedReasoningEffort ?? undefined,
+        reasoningLevel,
       };
 
       const result = await taskService.createTask(input, (output) => {
