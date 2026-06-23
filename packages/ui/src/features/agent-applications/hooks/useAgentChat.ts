@@ -7,6 +7,7 @@ import {
   type ClientToolOutcome,
 } from "@posthog/core/agent-chat/identifiers";
 import { useService } from "@posthog/di/react";
+import type { DecideApprovalRequest } from "@posthog/shared/agent-platform-types";
 import { useAuthenticatedClient } from "@posthog/ui/features/auth/authClient";
 import { toast } from "@posthog/ui/primitives/toast";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -134,6 +135,21 @@ export function useAgentChat({
     [service, client, session, ingressBaseUrl],
   );
 
+  // Decide a `principal`-type tool approval for this chat at the ingress (the
+  // session owner clears their own gated call). The open stream resumes the
+  // chat on approve.
+  const decideApproval = useCallback(
+    (approvalId: string, body: DecideApprovalRequest): Promise<void> =>
+      ingressBaseUrl
+        ? service.decideApproval(client, session, approvalId, body)
+        : // No live session to decide against — reject (not a silent resolve) so
+          // the card's mutation shows an error, not a false success toast.
+          Promise.reject(
+            new Error("This chat has no live session to decide the approval."),
+          ),
+    [service, client, session, ingressBaseUrl],
+  );
+
   const resolveInteractiveTool = useCallback(
     (
       callId: string,
@@ -165,6 +181,7 @@ export function useAgentChat({
     resume,
     newChat,
     resolveInteractiveTool,
+    decideApproval,
   };
 }
 

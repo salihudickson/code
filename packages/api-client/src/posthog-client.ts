@@ -32,6 +32,7 @@ import type {
   AgentSessionLogsParams,
   AgentSessionsListParams,
   AgentSlackManifest,
+  AgentUsersListResponse,
   BundleFile,
   DecideApprovalRequest,
 } from "@posthog/shared/agent-platform-types";
@@ -4413,6 +4414,9 @@ export class PostHogAPIClient {
     if (params?.revision_id) {
       url.searchParams.set("revision_id", params.revision_id);
     }
+    if (params?.agent_user_id) {
+      url.searchParams.set("agent_user_id", params.agent_user_id);
+    }
     if (params?.created_after) {
       url.searchParams.set("created_after", params.created_after);
     }
@@ -4863,6 +4867,50 @@ export class PostHogAPIClient {
     return (await response.json()) as AgentMemoryTableRows;
   }
 
+  // --- Users / connections --------------------------------------------------
+  // The agent's end-users (`agent_user`) and their linked external identities
+  // (`agent_identity_credential`). Connection metadata only — encrypted tokens
+  // never cross this boundary. Proxied Django → janitor → runtime store, same
+  // shape as the memory endpoints above.
+
+  /** List the agent's end-users, each with their linked connections. */
+  async listAgentUsers(idOrSlug: string): Promise<AgentUsersListResponse> {
+    const teamId = await this.getTeamId();
+    const path = `${this.agentApplicationsPath(teamId)}${encodeURIComponent(idOrSlug)}/users/`;
+    const url = new URL(`${this.api.baseUrl}${path}`);
+    const response = await this.api.fetcher.fetch({ method: "get", url, path });
+    // The fetcher doesn't throw on non-2xx — surface a genuine failure so the
+    // pane shows its error branch rather than masking it as "no users yet"
+    // (a non-2xx that still returns JSON would otherwise coalesce to `[]`).
+    if (!response.ok) {
+      throw new Error(`Failed to load agent users: ${response.status}`);
+    }
+    const data = (await response.json()) as Partial<AgentUsersListResponse>;
+    return { results: data.results ?? [], count: data.count ?? 0 };
+  }
+
+  /** Revoke one linked connection for an agent user (kept for audit, not deleted). */
+  async deleteAgentUserConnection(
+    idOrSlug: string,
+    agentUserId: string,
+    provider: string,
+  ): Promise<void> {
+    const teamId = await this.getTeamId();
+    const path = `${this.agentApplicationsPath(teamId)}${encodeURIComponent(idOrSlug)}/users/${encodeURIComponent(agentUserId)}/connections/${encodeURIComponent(provider)}/`;
+    const url = new URL(`${this.api.baseUrl}${path}`);
+    const response = await this.api.fetcher.fetch({
+      method: "delete",
+      url,
+      path,
+    });
+    // The fetcher doesn't throw on non-2xx. Revoke is a destructive, audited
+    // action — fail loudly so the caller's onError fires instead of a false
+    // "Connection revoked" success. 404 is treated as already-gone (idempotent).
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Failed to revoke connection: ${response.status}`);
+    }
+  }
+
   // --- Live chat (agent-ingress) -------------------------------------------
   // These hit the agent's ingress host (`ingress_base_url`, which already
   // includes `/agents/<slug>`), not the PostHog API. The shared fetcher
@@ -4907,6 +4955,32 @@ export class PostHogAPIClient {
       parameters: previewTokenHeader(previewToken),
       overrides: { body: JSON.stringify({ session_id: sessionId, message }) },
     });
+  }
+
+  /**
+   * Decide a `principal`-type tool approval at the ingress, as the session
+   * principal. The ingress authenticates the preview token / passthrough bearer
+   * and enforces principal-match — this is the session owner clearing their own
+   * gated call, not the owner-console (Django) decision path. `agent`-type
+   * approvals are NOT decidable here; they go through `decideAgentApproval`.
+   */
+  async decideAgentApprovalViaIngress(
+    ingressBaseUrl: string,
+    approvalId: string,
+    body: DecideApprovalRequest,
+    previewToken?: string | null,
+  ): Promise<{ ok: boolean; state: string }> {
+    const url = new URL(
+      `${ingressBaseUrl.replace(/\/$/, "")}/approvals/${encodeURIComponent(approvalId)}/decide`,
+    );
+    const response = await this.api.fetcher.fetch({
+      method: "post",
+      url,
+      path: url.pathname,
+      parameters: previewTokenHeader(previewToken),
+      overrides: { body: JSON.stringify(body) },
+    });
+    return (await response.json()) as { ok: boolean; state: string };
   }
 
   /** Return a client-tool result to an open session. */

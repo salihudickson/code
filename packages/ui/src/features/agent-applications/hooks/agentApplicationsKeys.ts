@@ -19,6 +19,13 @@ export const agentApplicationsKeys = {
       idOrSlug,
       sessionId,
     ] as const,
+  /**
+   * Shared prefix for every approval query of an agent — both the list
+   * (`approvals`) and the in-chat pending-approval poll (`chatPendingApproval`)
+   * live under it, so invalidating this prefix clears both at once.
+   */
+  approvalsPrefix: (projectId: number | null, idOrSlug: string) =>
+    ["agent-applications", "approvals", projectId, idOrSlug] as const,
   approvals: (projectId: number | null, idOrSlug: string, state?: string) =>
     [
       "agent-applications",
@@ -97,6 +104,8 @@ export const agentApplicationsKeys = {
     ["agent-applications", "memory-tables", projectId, idOrSlug] as const,
   memoryTable: (projectId: number | null, idOrSlug: string, name: string) =>
     ["agent-applications", "memory-table", projectId, idOrSlug, name] as const,
+  users: (projectId: number | null, idOrSlug: string) =>
+    ["agent-applications", "users", projectId, idOrSlug] as const,
   fleetLiveSessions: (projectId: number | null) =>
     ["agent-applications", "fleet", "live-sessions", projectId] as const,
   fleetApprovals: (projectId: number | null, state?: string) =>
