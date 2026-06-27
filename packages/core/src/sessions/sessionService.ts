@@ -3900,6 +3900,16 @@ export class SessionService {
     }
   }
 
+  /**
+   * Recovers cloud sessions after reconnect: retries errored streams and
+   * flushes stranded queues (same steps as the window-focus and auth-restored
+   * paths). Local sessions recover on their own via `reconcileLocalConnection`.
+   */
+  public recoverAfterReconnect(): void {
+    this.retryUnhealthyCloudSessions();
+    this.flushQueuedCloudMessagesAfterAuthRestored();
+  }
+
   public flushQueuedCloudMessagesAfterAuthRestored(): void {
     const sessions = this.d.store.getSessions();
     for (const session of Object.values(sessions)) {
