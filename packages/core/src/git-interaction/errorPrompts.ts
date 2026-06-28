@@ -5,6 +5,27 @@ export interface FixWithAgentPrompt {
   context: string;
 }
 
+export function buildCommitHookErrorPrompt(
+  command: string,
+): FixWithAgentPrompt {
+  return {
+    label: `Fix commit failure`,
+    context: `A \`git commit\` command failed, most likely because a pre-commit hook (e.g. lint, format, type-check, or secret scan) rejected the commit or exited with a non-zero status. The command that failed was:
+
+${command}
+
+The full hook output is below.
+
+Your task is to diagnose the root cause from the output and fix the underlying issue (e.g. lint/format violations, failing checks, missing dependencies) so the commit can succeed.
+
+IMPORTANT:
+- Start by reading the output carefully to identify which hook failed and why.
+- Fix the underlying issue rather than bypassing the hook. Do NOT use \`--no-verify\` unless the user explicitly asks for it.
+- Confirm any destructive actions with the user first.
+- Once the issue is resolved, you may retry the commit.`,
+  };
+}
+
 export function buildCreatePrFlowErrorPrompt(
   failedStep: CreatePrStep | null,
 ): FixWithAgentPrompt {
