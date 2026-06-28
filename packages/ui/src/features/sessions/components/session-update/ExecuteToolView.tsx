@@ -14,19 +14,18 @@ import {
 
 const ANSI_REGEX = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
 const MAX_COMMAND_LENGTH = 120;
-// git commit — allow flags / -c k=v / env-prefix between `git` and `commit`
-const GIT_COMMIT_COMMAND_REGEX =
-  /(?:^|[\s;&|(])git(?:\s+-\S+|\s+-[cC]\s+\S+)*\s+commit(?:\s|$)/;
 
-// hook managers + direct hook execution + common hook bodies
+const GIT_COMMIT_COMMAND_REGEX =
+  /(?:^|[\s;&|(])git(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+commit(?:\s|$)/;
+
 const PRE_COMMIT_COMMAND_REGEX =
-  /\blefthook\b[\s\S]*?\bpre-commit\b|\bpre-commit\b(?:[\s\S]*?\brun\b|\s+run\b|$)|\bhusky\b|\bovercommit\b|\blint-staged\b|[./]*\.(?:git\/hooks|husky)\/pre-commit\b/i;
+  /\blefthook\b[\s\S]*?\bpre-commit\b|\bpre-commit\b(?:[\s\S]*?\brun\b|$)|\bhusky\b(?:\s+run\b|[\s\S]*?\bpre-commit\b)|\bovercommit\b[\s\S]*?(?:--run\b|\bpre-commit\b)|\blint-staged\b|[./]*\.(?:git\/hooks|husky)\/pre-commit\b/i;
 
 const PRE_COMMIT_OUTPUT_REGEX =
-  /hook:\s*pre-commit\b|\blefthook\b.*\b(hook|run)\b|\bRunning hooks?\b.*\bpre-commit\b|\[pre-commit\]/i;
+  /hook:\s*pre-commit\b|\blefthook\b.*\b(?:hook|run)\b|\bRunning\s+(?:pre-commit\b.*\bhooks?\b|\bhooks?\b.*\bpre-commit\b)|\[pre-commit\]|\bhusky\b.*\bpre-commit\b/i;
 
 const EXIT_STATUS_SIGNAL_REGEX =
-  /\b(?:exit status|exit code|exited with code)\s+(\d+)\b/gi;
+  /\b(?:exit\s+(?:status|code)|exited\s+with\s+(?:code|status))[:\s]+(\d+)\b/gi;
 
 function hasNonZeroExitStatusSignal(text: string): boolean {
   for (const match of text.matchAll(EXIT_STATUS_SIGNAL_REGEX)) {
