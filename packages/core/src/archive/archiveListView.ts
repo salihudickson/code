@@ -34,7 +34,7 @@ export function mergeArchivedWithTasks(
 
   return archivedTasks.reduce<ArchivedTaskWithDetails[]>((acc, archived) => {
     const task = taskMap.get(archived.taskId) ?? null;
-    if (task?.created_by?.uuid === userId) {
+    if (userId !== undefined && task?.created_by?.uuid === userId) {
       acc.push({ archived, task });
     }
     return acc;

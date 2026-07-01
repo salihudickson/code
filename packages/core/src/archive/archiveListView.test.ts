@@ -76,6 +76,20 @@ describe("mergeArchivedWithTasks", () => {
     const result = mergeArchivedWithTasks(archived, tasks, "user-1");
     expect(result.map((item) => item.archived.taskId)).toEqual(["a", "c"]);
   });
+
+  it("returns an empty list when userId is undefined", () => {
+    const archived = [
+      makeArchived("a", "2024-01-02T00:00:00.000Z"),
+      makeArchived("missing", "2024-01-03T00:00:00.000Z"),
+    ];
+
+    const tasks = [
+      makeTask("a", { created_by: { uuid: "user-1" } as Task["created_by"] }),
+    ];
+
+    const result = mergeArchivedWithTasks(archived, tasks, undefined);
+    expect(result.map((item) => item.archived.taskId)).toEqual([]);
+  });
 });
 
 describe("filterAndSortArchivedTasks", () => {
