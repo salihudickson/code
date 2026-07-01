@@ -28,12 +28,17 @@ export interface ArchiveFilterSortInput {
 export function mergeArchivedWithTasks(
   archivedTasks: ArchivedTask[],
   tasks: Task[],
+  userId?: string,
 ): ArchivedTaskWithDetails[] {
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  return archivedTasks.map((archived) => ({
-    archived,
-    task: taskMap.get(archived.taskId) ?? null,
-  }));
+
+  return archivedTasks.reduce<ArchivedTaskWithDetails[]>((acc, archived) => {
+    const task = taskMap.get(archived.taskId) ?? null;
+    if (task?.created_by?.uuid === userId) {
+      acc.push({ archived, task });
+    }
+    return acc;
+  }, []);
 }
 
 export function formatRelativeDate(isoDate: string | undefined): string {

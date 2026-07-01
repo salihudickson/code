@@ -38,6 +38,7 @@ import { useSetHeaderContent } from "../../hooks/useSetHeaderContent";
 import { DotsCircleSpinner } from "../../primitives/DotsCircleSpinner";
 import { Tooltip } from "../../primitives/Tooltip";
 import { toast } from "../../primitives/toast";
+import { useMeQuery } from "../auth/useMeQuery";
 import { useTasks } from "../tasks/useTasks";
 import { useUnarchiveTask } from "./useUnarchiveTask";
 
@@ -434,6 +435,7 @@ export function ArchivedTasksViewPresentation({
 
 export function ArchivedTasksView() {
   const trpc = useHostTRPC();
+  const { data: user } = useMeQuery();
   const { data: archivedTasks = [], isLoading: isLoadingArchived } = useQuery(
     trpc.archive.list.queryOptions(),
   );
@@ -448,8 +450,8 @@ export function ArchivedTasksView() {
     useState<BranchNotFoundPrompt | null>(null);
 
   const items = useMemo(
-    () => mergeArchivedWithTasks(archivedTasks, tasks),
-    [archivedTasks, tasks],
+    () => mergeArchivedWithTasks(archivedTasks, tasks, user?.uuid),
+    [archivedTasks, tasks, user],
   );
 
   const isLoading = isLoadingArchived || isLoadingTasks;
