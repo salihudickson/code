@@ -6,6 +6,7 @@ import {
   deriveUniqueRepos,
   filterAndSortArchivedTasks,
   getRepoName,
+  mergeArchivedWithTasks,
   withRepoNames,
 } from "./archiveListView";
 
@@ -55,6 +56,25 @@ describe("deriveUniqueRepos", () => {
       { archived: makeArchived("c", "2024-01-04T00:00:00.000Z"), task: null },
     ]);
     expect(deriveUniqueRepos(items)).toEqual(["alpha", "zed"]);
+  });
+});
+
+describe("mergeArchivedWithTasks", () => {
+  it("returns only archived tasks owned by the requested user id", () => {
+    const archived = [
+      makeArchived("a", "2024-01-02T00:00:00.000Z"),
+      makeArchived("b", "2024-01-03T00:00:00.000Z"),
+      makeArchived("c", "2024-01-04T00:00:00.000Z"),
+    ];
+
+    const tasks = [
+      makeTask("a", { created_by: { uuid: "user-1" } as Task["created_by"] }),
+      makeTask("b", { created_by: { uuid: "user-2" } as Task["created_by"] }),
+      makeTask("c", { created_by: { uuid: "user-1" } as Task["created_by"] }),
+    ];
+
+    const result = mergeArchivedWithTasks(archived, tasks, "user-1");
+    expect(result.map((item) => item.archived.taskId)).toEqual(["a", "c"]);
   });
 });
 
